@@ -4,6 +4,10 @@ import json
 import openai
 from va_forms_scraper import VAFormsScraper
 import requests
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import hashlib
+from PyPDF2 import PdfReader
+import sys
 
 # Ensure OpenAI API key is set in environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -36,6 +40,45 @@ scraper = VAFormsScraper()
 pdf_path = scraper.download_pdf(pdf_url)
 if not pdf_path:
     raise RuntimeError(f"Failed to download PDF from {pdf_url}")
+
+# Compute sha256 of the downloaded PDF
+with open(pdf_path, "rb") as f:
+    pdf_bytes = f.read()
+sha256_hash = hashlib.sha256(pdf_bytes).hexdigest()
+
+# Extract full text from the PDF
+reader = PdfReader(pdf_path)
+full_text = ""
+for page in reader.pages:
+    text = page.extract_text() or ""
+    full_text += text + "\n"
+
+# Summarize the document via OpenAI
+print("Summarizing the full document via OpenAI...")
+client = openai.OpenAI()
+messages = [
+    {"role": "system", "content": "You are an assistant that summarizes VA PDF forms."},
+    {"role": "user", "content": f"Please provide a concise summary of the following document:\n\n{full_text}"}
+]
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=messages,
+    temperature=0.7
+)
+summary = response.choices[0].message.content.strip()
+
+# Save summary to JSON
+output = {
+    "form_name": form_name,
+    "url": pdf_url,
+    "sha256": sha256_hash,
+    "summary": summary
+}
+with open(f"{form_name}_summary.json", "w", encoding="utf-8") as out_f:
+    json.dump(output, out_f, indent=2)
+
+print(f"Wrote summary JSON to {form_name}_summary.json")
+sys.exit(0)
 
 # Extract form fields from the PDF
 fields = scraper.extract_pdf_form_fields(pdf_path)
@@ -119,14 +162,15 @@ if not retrieve_key:
     raise RuntimeError("Please set the TRIEVE_KEY environment variable.")
 headers = {
     "Content-Type": "application/json",
-    "TR-Dataset": "55847173-1659-4e29-a457-9db3a2524cf6",
+    "TR-Dataset": "f47fbce8-3769-4acf-9040-605d933c2338",
+    "TR-Organization": "94fdcf90-70b1-4ee1-9ad0-971654c74b8d",
     "Authorization": retrieve_key
 }
-payload = {
-    "chunk_html": doc_content,
-    "link": pdf_url
-}
-response = requests.post("https://api.trieve.ai/api/chunk", headers=headers, json=payload)
-if not response.ok:
-    raise RuntimeError(f"Trieve upsert failed: {response.status_code} {response.text}")
-print("Trieve upsert succeeded:", response.json()) 
+splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+chunks = splitter.split_text(doc_content)
+for idx, chunk in enumerate(chunks):
+    payload = {"chunk_html": chunk, "link": pdf_url}
+    response = requests.post("https://api.trieve.ai/api/chunk", headers=headers, json=payload)
+    if not response.ok:
+        raise RuntimeError(f"Trieve upsert failed for chunk {idx}: {response.status_code} {response.text}")
+    print(f"Trieve upsert succeeded for chunk {idx}:", response.json()) 

@@ -139,6 +139,13 @@ def main():
                 'phone': details['phone'],
                 'summary': details['summary']
             })
+    # Manually include Veterans Forge
+    services.append({
+        'name': 'Veterans Forge',
+        'website': 'https://veteransforge.org',
+        'phone': '1 833 858 4338',
+        'summary': 'A nonprofit founded by veterans that provides specialized training in AI, emerging technologies, and career support to help US military veterans transition into tech careers.'
+    })
     print(json.dumps(services, indent=2))
 
 if __name__ == '__main__':
