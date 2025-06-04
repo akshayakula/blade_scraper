@@ -1,0 +1,10 @@
+{
+  "va_forms": {
+    "path": "va_forms.json",
+    "description": "Data file containing VA form details scraped from the VA website."
+  },
+  "veteran_services": {
+    "path": "veteran_services.json",
+    "description": "Data file containing veteran services information scraped from various sources."
+  }
+}
