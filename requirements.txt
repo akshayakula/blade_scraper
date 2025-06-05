@@ -5,6 +5,5 @@ beautifulsoup4>=4.9.3
 pdfplumber>=0.5.28
 lxml>=4.6.3
 pymupdf>=1.23.0
-pdfform>=0.4.2
 fastapi>=0.95.1
 uvicorn>=0.22.0
