@@ -346,4 +346,107 @@ for summary_file in SUMMARIES_DIR.glob("*.txt"):
 with open('va_forms_summaries.json', 'w') as out:
     json.dump(summaries, out, indent=2)
 
-logger.info(f"Created consolidated summary file with {len(summaries)} entries")
+logger.info(f"Created consolidated summary file with {len(summaries)} entries")#!/usr/bin/env python3
+
+import os
+import argparse
+import json
+import requests
+import tempfile
+from PyPDF2 import PdfReader
+import openai
+
+# Ensure OPENAI_API_KEY is set
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    print("Error: Please set the OPENAI_API_KEY environment variable.")
+    exit(1)
+
+openai.api_key = OPENAI_API_KEY
+
+# Parse optional start-id argument to resume processing after a given form entry id
+parser = argparse.ArgumentParser(description='Summarize VA forms PDFs with optional resume support')
+parser.add_argument('--start-id', help='Entry id in va_forms.json after which to start processing', default=None)
+args = parser.parse_args()
+start_id = args.start_id
+# If start-id provided, skip entries until we hit that id, then resume on subsequent entries
+skip = bool(start_id)
+
+# Load VA forms metadata
+with open('va_forms.json', 'r') as f:
+    data_obj = json.load(f)
+    va_forms = data_obj.get('data', [])
+
+summaries = []
+
+for entry in va_forms:
+    # Handle resume: skip until after start_id
+    if skip:
+        if entry.get('id') == start_id:
+            skip = False
+        continue
+    attrs = entry.get('attributes', {})
+    url = attrs.get('url', '')
+    if not url.lower().endswith('.pdf'):
+        continue
+
+    form_name = attrs.get('form_name')
+    title = attrs.get('title')
+    print(f"Processing {form_name}: {title}")
+
+    # Download PDF
+    try:
+        resp = requests.get(url, stream=True)
+        resp.raise_for_status()
+    except Exception as e:
+        # Log missed form and continue
+        with open('missed_forms.txt', 'a') as mf:
+            mf.write(f"{entry.get('id')}|{form_name}|{url}|{e}\n")
+        continue
+    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+        for chunk in resp.iter_content(chunk_size=8192):
+            tmp.write(chunk)
+        pdf_path = tmp.name
+
+    # Extract form fields
+    reader = PdfReader(pdf_path)
+    fields = reader.get_fields() or {}
+    field_list = []
+    for name, info in fields.items():
+        ftype = info.get('/FT', 'Unknown')
+        label = info.get('/TU') or info.get('/T') or name
+        field_list.append({
+            'name': name,
+            'label': label,
+            'type': ftype
+        })
+
+    # Summarize using OpenAI
+    prompt = (
+        f"You are an AI assistant. Summarize the following VA PDF form focusing on what this document can accomplish for a veteran. "
+        f"Provide a concise overview. PDF URL: {url}"
+    )
+    response = openai.chat.completions.create(
+        model='gpt-4',
+        messages=[
+            { 'role': 'system', 'content': 'You summarize VA forms for veterans.' },
+            { 'role': 'user', 'content': prompt }
+        ],
+        temperature=0.3,
+        max_tokens=500
+    )
+    summary_text = response.choices[0].message.content.strip()
+
+    summaries.append({
+        'form_name': form_name,
+        'title': title,
+        'url': url,
+        'summary': summary_text,
+        'fields': field_list
+    })
+
+# Write out summary JSON
+with open('va_forms_summaries.json', 'w') as out:
+    json.dump(summaries, out, indent=2)
+
+print(f"Generated summaries for {len(summaries)} forms to va_forms_summaries.json") 
